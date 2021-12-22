@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 
-# Telegram chat reader v1.00
-# 21/12/2021
+# Telegram chat reader v1.01
+# 22/12/2021
 # https://t.me/ssleg  © 2021
 
 
 import logging
+from hashlib import md5
 from os import path
 from sys import argv
 
 import psycopg2
 import toml
+from requests import post
 from telethon import TelegramClient, functions, errors
 
 import reader_module
@@ -83,6 +85,26 @@ def get_db_chats_dict(curs):
     return chats_dict
 
 
+# загрузка статистики работы на сервер
+def stat_upload(read_mess):
+    request_headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'Content-Type': 'application/json; charset=utf-8'
+    }
+    # noinspection HttpUrlsUsage
+    stat_upload_url = 'http://188.124.50.148/stat_up'
+    finger = str(api_id) + api_hash
+    hash_md5 = md5(finger.encode())
+    request_json = {'protocol_version': '1.2', 'application': 'Chat Reader', 'app_version': get_version(),
+                    'uptime': 0, 'errors': 0, 'fingerprint': hash_md5.hexdigest(), 'users': 0, 'work_count': read_mess}
+    try:
+        post(stat_upload_url, headers=request_headers, json=request_json, timeout=5)
+
+    except Exception as e:
+        levent = 'ошибка в http запросе: ' + str(e)
+        logging.error(levent)
+
+
 # обновление всех чатов
 def update_all():
     client = TelegramClient('chat_reader', api_id, api_hash)
@@ -107,6 +129,7 @@ def update_all():
             summary_read += await reader_module.read_chat(key)
             print('')
 
+        stat_upload(summary_read)
         levent = f'Всего прочитано: {set_num_printable(summary_read)}.'
         print(levent)
         logging.info(levent)
@@ -287,7 +310,8 @@ def add_new(chat_name):
                                    entry)
                     con.commit()
                 await reader_module.init(client, con, cursor)
-                await reader_module.read_chat(chat_id)
+                readed = await reader_module.read_chat(chat_id)
+                stat_upload(readed)
 
         except TypeError as e:
             if str(e) == 'Cannot cast InputPeerUser to any kind of InputChannel.':
