@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-# Telegram chat reader v1.01
-# 22/12/2021
+# Telegram chat reader v1.02
+# 23/12/2021
 # https://t.me/ssleg  © 2021
 
 
@@ -184,7 +184,6 @@ def check_config():
                                password=database_pass,
                                host=database_host,
                                port=database_port)
-        valid_db = True
         cursor = con.cursor()
         cursor.execute('''
         create table if not exists chat_reader_users
@@ -237,9 +236,12 @@ def check_config():
             constraint chat_reader_pk
                 primary key (chat_id, message_id)
         );
+        
+        create index if not exists chat_reader_mess_user_id on chat_reader_mess (user_id);
         ''')
         con.commit()
         con.close()
+        valid_db = True
 
     except Exception as e:
         print(e)
@@ -249,8 +251,8 @@ def check_config():
         client = TelegramClient('chat_reader', api_id, api_hash)
         client.start()
         print(f'версия telethon {client.__version__}')
-        valid_client = True
         client.disconnect()
+        valid_client = True
 
     except Exception as e:
         print(e)
