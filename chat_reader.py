@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-# Telegram chat reader v1.02
-# 23/12/2021
-# https://t.me/ssleg  © 2021
+# Telegram chat reader v1.10
+# 29/01/2022
+# https://t.me/ssleg  © 2021-2022
 
 
 import logging
@@ -13,7 +13,7 @@ from sys import argv
 import psycopg2
 import toml
 from requests import post
-from telethon import TelegramClient, functions, errors
+from telethon import TelegramClient, functions, errors, types
 
 import reader_module
 
@@ -40,7 +40,8 @@ help_mess = '''
 Команды:
 --check - проверяет настройки бд и telegram.
 --all - скачивает обновления для всех чатов, которые ранее скачивались в бд.
---сhat name - добавляет и скачивает чат @name или чат, подключенный к каналу @name
+--сhat name - добавляет и скачивает чат @name или чат, подключенный к каналу @name.
+--private - меню выбора, добавления и скачивания приватных чатов.
 '''
 
 
@@ -68,9 +69,17 @@ def set_num_printable(number):
     return string
 
 
+# инициализация файла лога
+# noinspection SpellCheckingInspection
+def init_log():
+    lfile = logging.FileHandler(log_name, 'w', 'utf-8')
+    lfile.setFormatter(logging.Formatter('%(levelname)s %(module)-13s [%(asctime)s] %(message)s'))
+    logging.basicConfig(level=logging.INFO, handlers=[lfile])
+
+
 # словарь чатов в базе данных
-def get_db_chats_dict(curs):
-    curs.execute('''
+def get_db_chats_dict(cursor):
+    cursor.execute('''
      select title, channel_id from chat_reader_channels as crc
      right join
          (select chat_id from chat_reader_mess group by chat_id) as temp
@@ -79,7 +88,7 @@ def get_db_chats_dict(curs):
 
     chats_dict = {}
 
-    for row in curs.fetchall():
+    for row in cursor.fetchall():
         chats_dict[row[1]] = row[0]
 
     return chats_dict
@@ -107,6 +116,7 @@ def stat_upload(read_mess):
 
 # обновление всех чатов
 def update_all():
+    init_log()
     client = TelegramClient('chat_reader', api_id, api_hash)
 
     con = psycopg2.connect(database=database,
@@ -271,8 +281,31 @@ def check_config():
     file.close()
 
 
+async def new_chat_load(client, con, cursor, chat_id, chat_title, chat_username):
+    chats_dict = get_db_chats_dict(cursor)
+    if chat_id in chats_dict:
+        levent = f'Чат {chat_title} уже есть в базе.'
+        print(levent)
+        logging.info(levent)
+    else:
+        levent = f'Добавлен чат: id - {chat_id}, название - {chat_title}. читаем...'
+        print(levent)
+        logging.info(levent)
+        cursor.execute('select channel_id from chat_reader_channels where channel_id=%s', (chat_id,))
+        row = cursor.fetchone()
+        if row is None:
+            entry = (chat_id, chat_title, chat_username)
+            cursor.execute('insert into chat_reader_channels (channel_id, title, user_name) values (%s,%s,%s)',
+                           entry)
+            con.commit()
+        await reader_module.init(client, con, cursor)
+        read = await reader_module.read_chat(chat_id)
+        stat_upload(read)
+
+
 # добавление нового чата
 def add_new(chat_name):
+    init_log()
     con = psycopg2.connect(database=database,
                            user=database_user,
                            password=database_pass,
@@ -295,25 +328,7 @@ def add_new(chat_name):
             chat_id = info.chats[index].id
             chat_title = info.chats[index].title
             chat_username = info.chats[index].username
-            chats_dict = get_db_chats_dict(cursor)
-            if chat_id in chats_dict:
-                levent = f'Чат {chat_title} уже есть в базе.'
-                print(levent)
-                logging.info(levent)
-            else:
-                levent = f'Добавлен чат: id - {chat_id}, название - {chat_title}. читаем...'
-                print(levent)
-                logging.info(levent)
-                cursor.execute('select channel_id from chat_reader_channels where channel_id=%s', (chat_id,))
-                row = cursor.fetchone()
-                if row is None:
-                    entry = (chat_id, chat_title, chat_username)
-                    cursor.execute('insert into chat_reader_channels (channel_id, title, user_name) values (%s,%s,%s)',
-                                   entry)
-                    con.commit()
-                await reader_module.init(client, con, cursor)
-                readed = await reader_module.read_chat(chat_id)
-                stat_upload(readed)
+            await new_chat_load(client, con, cursor, chat_id, chat_title, chat_username)
 
         except TypeError as e:
             if str(e) == 'Cannot cast InputPeerUser to any kind of InputChannel.':
@@ -343,6 +358,64 @@ def add_new(chat_name):
     con.close()
 
 
+# добавление нового приватного чата
+def add_private():
+    init_log()
+    con = psycopg2.connect(database=database,
+                           user=database_user,
+                           password=database_pass,
+                           host=database_host,
+                           port=database_port)
+    cursor = con.cursor()
+
+    client = TelegramClient('chat_reader', api_id, api_hash)
+
+    async def add_private_chat():
+        try:
+            count = 0
+            chats_dict = {}
+            async for dialog in client.iter_dialogs():
+                entity = dialog.entity
+                if type(entity) == types.Channel:
+                    if entity.broadcast is False and entity.username is None and entity.has_link is False:
+                        count += 1
+                        print(f'{count}. {entity.title} ({entity.participants_count} человек)')
+                        chats_dict[count] = (entity.id, entity.title)
+                if type(entity) == types.Chat:
+                    if entity.deactivated is False:
+                        count += 1
+                        print(f'{count}. {entity.title} ({entity.participants_count} человек)')
+                        chats_dict[count] = (entity.id, entity.title)
+
+            if count > 0:
+                print('')
+                prompt = f'\nВведите номер чата для добавления (от 1 - до {count}) или n для отмены: '
+                input_str = input(prompt)
+                if input_str.isdigit():
+                    if 0 < int(input_str) <= count:
+                        chat_id = chats_dict[int(input_str)][0]
+                        chat_title = chats_dict[int(input_str)][1]
+                        chat_username = None
+                        await new_chat_load(client, con, cursor, chat_id, chat_title, chat_username)
+                    else:
+                        print(f'{input_str} > {count}, неверный номер чата, выходим...')
+                elif input_str == 'n':
+                    print('Отмена, выходим...')
+                else:
+                    print('Это не число и не номер чата, выходим...')
+            else:
+                print('Приватные чаты не обнаружены.')
+
+        except Exception as e:
+            print(e)
+
+    client.start()
+    client.loop.run_until_complete(add_private_chat())
+
+    client.disconnect()
+    con.close()
+
+
 # точка входа
 if __name__ == '__main__':
     param_dict = toml.load('chat_reader.toml')
@@ -365,7 +438,7 @@ if __name__ == '__main__':
 
     validated = config.get('validated')
 
-    if len(argv) == 1:
+    if 0 <= len(argv) <= 1:
         if validated is None:
             print(check_mess)
             exit(1)
@@ -384,10 +457,6 @@ if __name__ == '__main__':
 
     elif argv[1] == '--all':
         if validated is True:
-            lfile = logging.FileHandler(log_name, 'w', 'utf-8')
-            # noinspection SpellCheckingInspection
-            lfile.setFormatter(logging.Formatter('%(levelname)s %(module)-13s [%(asctime)s] %(message)s'))
-            logging.basicConfig(level=logging.INFO, handlers=[lfile])
             update_all()
         else:
             print(check_mess)
@@ -395,13 +464,15 @@ if __name__ == '__main__':
     elif argv[1] == '--chat':
         if validated is True:
             if len(argv) == 3:
-                lfile = logging.FileHandler(log_name, 'w', 'utf-8')
-                # noinspection SpellCheckingInspection
-                lfile.setFormatter(logging.Formatter('%(levelname)s %(module)-13s [%(asctime)s] %(message)s'))
-                logging.basicConfig(level=logging.INFO, handlers=[lfile])
                 add_new(argv[2])
             else:
                 print('не указано имя чата/канала.')
+        else:
+            print(check_mess)
+
+    elif argv[1] == '--private':
+        if validated is True:
+            add_private()
         else:
             print(check_mess)
 

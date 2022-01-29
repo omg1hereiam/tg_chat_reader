@@ -1,6 +1,6 @@
-# Chat reader module v1.00
-# 21/12/2021
-# https://t.me/ssleg  © 2021
+# Chat reader module v1.10
+# 29/01/2022
+# https://t.me/ssleg  © 2021-2022
 
 import logging
 from asyncio import sleep
@@ -62,7 +62,10 @@ async def read_messages(chat_id, start_id, limit):
         last_read_id = message_id
         message_date = message.date
         message_text = message.text
-        message_chat_id = message.peer_id.channel_id
+        if type(message.peer_id) == types.PeerChat:
+            message_chat_id = message.peer_id.chat_id
+        else:
+            message_chat_id = message.peer_id.channel_id
 
         message_from = message.from_id
         user_id = None
