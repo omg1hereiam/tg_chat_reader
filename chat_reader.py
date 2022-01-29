@@ -281,6 +281,7 @@ def check_config():
     file.close()
 
 
+# проверка и загрузка нового чата
 async def new_chat_load(client, con, cursor, chat_id, chat_title, chat_username):
     chats_dict = get_db_chats_dict(cursor)
     if chat_id in chats_dict:
