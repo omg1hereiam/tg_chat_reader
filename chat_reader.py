@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-# Telegram chat reader v1.10
-# 29/01/2022
+# Telegram chat reader v1.11
+# 02/02/2022
 # https://t.me/ssleg  © 2021-2022
 
 
@@ -168,7 +168,16 @@ def print_stats():
         messages += row[0]
         chats_count += 1
 
-    print(f'В базе {set_num_printable(messages)} сообщений из {chats_count} чатов.')
+    cursor.execute('select count(user_id) from chat_reader_users')
+    row = cursor.fetchone()
+    users_count = row[0]
+
+    cursor.execute('select count(channel_id) from chat_reader_channels')
+    row = cursor.fetchone()
+    channels_count = row[0]
+
+    print(f'В базе {set_num_printable(messages)} сообщений из {set_num_printable(chats_count)} чатов.')
+    print(f'{set_num_printable(users_count)} пользователей и {set_num_printable(channels_count)} каналов.')
 
     cursor.execute("select pg_total_relation_size('chat_reader_mess')")
     row = cursor.fetchone()
@@ -180,7 +189,7 @@ def print_stats():
     row = cursor.fetchone()
     size_of += row[0]
     size_mb = round(size_of / 1048576, 2)
-    print(f'Размер таблиц {set_num_printable(size_mb)} Мб.')
+    print(f'Размер таблиц: {set_num_printable(size_mb)} Мб.')
 
     con.close()
 
